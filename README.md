@@ -287,8 +287,6 @@ Writing forwarded traffic to output_filtered.pcap...
 
 **Shrest Kumar**
 - GitHub: [@GoodAsur2023](https://github.com/GoodAsur2023)
-- Email: shrestkumar2303@gmail.com
-
 ---
 
 ## License
