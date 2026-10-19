@@ -1,0 +1,61 @@
+name: AegisFlow CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-test:
+    name: Build & Test (${{ matrix.os }} - ${{ matrix.compiler }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            compiler: gcc
+            cxx: g++
+          - os: ubuntu-latest
+            compiler: clang
+            cxx: clang++
+          - os: windows-latest
+            compiler: msvc
+            cxx: cl
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Targets
+        run: cmake --build build --config Release
+
+      - name: Generate Synthetic PCAP
+        run: python generate_test_pcap.py
+
+      - name: Run AegisFlow DPI Engine (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          ./build/dpi_engine test_dpi.pcap output_ci.pcap --block-app YouTube --block-ip 192.168.1.50
+          test -f alerts.jsonl
+          test -f output_ci.pcap
+
+      - name: Run AegisFlow DPI Engine (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          .\build\Release\dpi_engine.exe test_dpi.pcap output_ci.pcap --block-app YouTube --block-ip 192.168.1.50
+          if (!(Test-Path alerts.jsonl)) { exit 1 }
+
+      - name: Run Python Control Plane (CVE Remediation Auditor)
+        run: |
+          python control_plane/cve_remediator.py --alerts alerts.jsonl --export-md ci_remediation.md
+          cat ci_remediation.md
