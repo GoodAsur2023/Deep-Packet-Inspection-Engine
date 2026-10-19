@@ -17,8 +17,8 @@ void printPacketSummary(const ParsedPacket& pkt, int packet_num) {
     
     // Ethernet layer
     std::cout << "\n[Ethernet]\n";
-    std::cout << "  Source MAC:      " << pkt.src_mac << "\n";
-    std::cout << "  Destination MAC: " << pkt.dest_mac << "\n";
+    std::cout << "  Source MAC:      " << pkt.srcMacString() << "\n";
+    std::cout << "  Destination MAC: " << pkt.destMacString() << "\n";
     std::cout << "  EtherType:       0x" << std::hex << std::setfill('0') 
               << std::setw(4) << pkt.ether_type << std::dec;
     
@@ -34,8 +34,8 @@ void printPacketSummary(const ParsedPacket& pkt, int packet_num) {
     // IP layer
     if (pkt.has_ip) {
         std::cout << "\n[IPv" << static_cast<int>(pkt.ip_version) << "]\n";
-        std::cout << "  Source IP:      " << pkt.src_ip << "\n";
-        std::cout << "  Destination IP: " << pkt.dest_ip << "\n";
+        std::cout << "  Source IP:      " << pkt.srcIPString() << "\n";
+        std::cout << "  Destination IP: " << pkt.destIPString() << "\n";
         std::cout << "  Protocol:       " << PacketParser::protocolToString(pkt.protocol) << "\n";
         std::cout << "  TTL:            " << static_cast<int>(pkt.ttl) << "\n";
     }

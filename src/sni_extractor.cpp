@@ -107,6 +107,7 @@ std::optional<TLSSecurityProfile> SNIExtractor::auditClientHello(const uint8_t* 
 
     uint32_t handshake_length = readUint24BE(payload + offset + 1);
     offset += 4; // Skip handshake type + length
+    if (offset + handshake_length > length) return std::nullopt;
 
     if (offset + 34 > length) return std::nullopt;
     profile.client_version = readUint16BE(payload + offset);

@@ -37,4 +37,50 @@ set(DPI_SOURCES
 add_executable(dpi_engine ${DPI_SOURCES})
 
 find_package(Threads REQUIRED)
-target_link_libraries(dpi_engine PRIVATE Threads::Threads)
+
+# Optional libpcap support
+find_library(PCAP_LIB NAMES pcap wpcap)
+if(PCAP_LIB)
+    set(PCAP_LIBRARIES ${PCAP_LIB})
+    if(WIN32)
+        list(APPEND PCAP_LIBRARIES ws2_32)
+    endif()
+    message(STATUS "Found pcap library: ${PCAP_LIB}")
+else()
+    set(PCAP_LIBRARIES "")
+    message(STATUS "pcap library not found; live capture disabled, offline PCAP enabled.")
+endif()
+
+target_link_libraries(packet_analyzer PRIVATE ${PCAP_LIBRARIES})
+target_link_libraries(dpi_engine PRIVATE Threads::Threads ${PCAP_LIBRARIES})
+
+# 3. Unit Test Suite (GoogleTest)
+option(BUILD_TESTING "Build the testing tree" ON)
+if(BUILD_TESTING)
+    enable_testing()
+    find_package(GTest QUIET)
+    if(NOT GTest_FOUND)
+        include(FetchContent)
+        FetchContent_Declare(
+            googletest
+            URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
+        )
+        set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(googletest)
+    endif()
+
+    set(TEST_SOURCES
+        tests/test_engine.cpp
+        src/pcap_reader.cpp
+        src/packet_parser.cpp
+        src/sni_extractor.cpp
+        src/banner_extractor.cpp
+        src/telemetry_emitter.cpp
+        src/md5.cpp
+        src/types.cpp
+    )
+    add_executable(test_engine ${TEST_SOURCES})
+    target_link_libraries(test_engine PRIVATE GTest::gtest GTest::gtest_main Threads::Threads ${PCAP_LIBRARIES})
+    add_test(NAME AegisFlowTestSuite COMMAND test_engine)
+endif()
+

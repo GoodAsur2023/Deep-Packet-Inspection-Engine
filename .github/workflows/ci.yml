@@ -33,11 +33,20 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpcap-dev libgtest-dev
+
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build Targets
         run: cmake --build build --config Release
+
+      - name: Run GoogleTest Suite (CTest)
+        run: ctest --test-dir build --output-on-failure -C Release
 
       - name: Generate Synthetic PCAP
         run: python generate_test_pcap.py

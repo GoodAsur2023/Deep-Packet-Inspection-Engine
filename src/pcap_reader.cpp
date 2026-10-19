@@ -62,10 +62,93 @@ void PcapReader::close() {
     if (file_.is_open()) {
         file_.close();
     }
+#if AEGISFLOW_HAS_LIBPCAP
+    if (pcap_handle_) {
+        pcap_close(pcap_handle_);
+        pcap_handle_ = nullptr;
+    }
+#endif
+    is_live_ = false;
     needs_byte_swap_ = false;
 }
 
+bool PcapReader::openLive(const std::string& interface_name, int snaplen, int promisc, int to_ms) {
+#if AEGISFLOW_HAS_LIBPCAP
+    close();
+
+    char errbuf[PCAP_ERRBUF_SIZE];
+    pcap_handle_ = pcap_open_live(interface_name.c_str(), snaplen, promisc, to_ms, errbuf);
+    if (!pcap_handle_) {
+        std::cerr << "Error: Could not open live interface '" << interface_name << "': " << errbuf << std::endl;
+        return false;
+    }
+
+    int linktype = pcap_datalink(pcap_handle_);
+    global_header_.magic_number = PCAP_MAGIC_NATIVE;
+    global_header_.version_major = 2;
+    global_header_.version_minor = 4;
+    global_header_.thiszone = 0;
+    global_header_.sigfigs = 0;
+    global_header_.snaplen = static_cast<uint32_t>(snaplen);
+    global_header_.network = static_cast<uint32_t>(linktype > 0 ? linktype : 1);
+
+    is_live_ = true;
+    needs_byte_swap_ = false;
+
+    std::cout << "Opened live interface: " << interface_name << std::endl;
+    std::cout << "  Snaplen: " << global_header_.snaplen << " bytes" << std::endl;
+    std::cout << "  Link type: " << global_header_.network 
+              << (global_header_.network == 1 ? " (Ethernet)" : "") << std::endl;
+
+    return true;
+#else
+    (void)interface_name; (void)snaplen; (void)promisc; (void)to_ms;
+    std::cerr << "Error: Live capture disabled (libpcap not available at compile time)\n";
+    return false;
+#endif
+}
+
+std::vector<NetworkInterfaceInfo> PcapReader::listInterfaces() {
+    std::vector<NetworkInterfaceInfo> result;
+#if AEGISFLOW_HAS_LIBPCAP
+    char errbuf[PCAP_ERRBUF_SIZE];
+    pcap_if_t* alldevs = nullptr;
+
+    if (pcap_findalldevs(&alldevs, errbuf) == 0 && alldevs) {
+        for (pcap_if_t* d = alldevs; d != nullptr; d = d->next) {
+            NetworkInterfaceInfo info;
+            info.name = d->name ? d->name : "";
+            info.description = d->description ? d->description : "";
+            info.is_loopback = (d->flags & PCAP_IF_LOOPBACK) != 0;
+            result.push_back(std::move(info));
+        }
+        pcap_freealldevs(alldevs);
+    }
+#endif
+    return result;
+}
+
 bool PcapReader::readNextPacket(RawPacket& packet) {
+#if AEGISFLOW_HAS_LIBPCAP
+    if (is_live_) {
+        if (!pcap_handle_) return false;
+        struct pcap_pkthdr* hdr = nullptr;
+        const u_char* data = nullptr;
+        int res = pcap_next_ex(pcap_handle_, &hdr, &data);
+        if (res == 1 && hdr && data) {
+            packet.header.ts_sec = static_cast<uint32_t>(hdr->ts.tv_sec);
+            packet.header.ts_usec = static_cast<uint32_t>(hdr->ts.tv_usec);
+            packet.header.incl_len = hdr->caplen;
+            packet.header.orig_len = hdr->len;
+            packet.data.assign(data, data + hdr->caplen);
+            return true;
+        }
+        // res == 0: timeout expired (no packet yet in this poll window)
+        // res < 0: EOF or error
+        return false;
+    }
+#endif
+
     if (!file_.is_open()) {
         return false;
     }

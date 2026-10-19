@@ -14,6 +14,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <optional>
+#include <csignal>
 
 #include "pcap_reader.h"
 #include "packet_parser.h"
@@ -25,6 +26,14 @@
 
 using namespace PacketAnalyzer;
 using namespace DPI;
+
+static std::atomic<bool> g_stop_signal{false};
+
+static void signalHandler(int sig) {
+    if (sig == SIGINT || sig == SIGTERM) {
+        g_stop_signal.store(true);
+    }
+}
 
 // =============================================================================
 // Packet Job representation
@@ -493,11 +502,18 @@ public:
     void blockApp(const std::string& app) { rules_.blockApp(app); }
     void blockDomain(const std::string& dom) { rules_.blockDomain(dom); }
     
-    bool process(const std::string& input_pcap, const std::string& output_pcap) {
+    bool process(const std::string& input_source, const std::string& output_pcap, bool is_live = false, uint32_t packet_limit = 0) {
         PcapReader reader;
-        if (!reader.open(input_pcap)) {
-            std::cerr << "Failed to open PCAP file: " << input_pcap << "\n";
-            return false;
+        if (is_live) {
+            if (!reader.openLive(input_source)) {
+                std::cerr << "Failed to open live interface: " << input_source << "\n";
+                return false;
+            }
+        } else {
+            if (!reader.open(input_source)) {
+                std::cerr << "Failed to open PCAP file: " << input_source << "\n";
+                return false;
+            }
         }
         
         std::ofstream output(output_pcap, std::ios::binary);
@@ -513,6 +529,7 @@ public:
         std::cout << "\n╔══════════════════════════════════════════════════════════════╗\n";
         std::cout << "║       AegisFlow DPI & Cryptographic Posture Engine           ║\n";
         std::cout << "╠══════════════════════════════════════════════════════════════╣\n";
+        std::cout << "║ Mode: " << (is_live ? "LIVE NETWORK CAPTURE (Daemon Mode)  " : "OFFLINE PCAP TRACE ANALYSIS   ") << "    ║\n";
         std::cout << "║ Load Balancers: " << std::setw(2) << cfg_.num_lbs 
                   << "  │ FP Workers/LB: " << std::setw(2) << cfg_.fps_per_lb
                   << "  │ Total FPs: " << std::setw(2) << (cfg_.num_lbs * cfg_.fps_per_lb) << "        ║\n";
@@ -523,14 +540,33 @@ public:
         for (auto& fp : fps_) fp->start();
         for (auto& lb : lbs_) lb->start();
         
-        std::cout << "Reading packets from " << input_pcap << "...\n";
+        if (is_live) {
+            std::cout << "Capturing live packets from interface: " << input_source << "\n";
+            if (packet_limit > 0) {
+                std::cout << "Capture limit: " << packet_limit << " packets (or Ctrl+C to terminate early)\n";
+            } else {
+                std::cout << "Continuous daemon mode running. Press Ctrl+C to terminate.\n";
+            }
+        } else {
+            std::cout << "Reading packets from " << input_source << "...\n";
+        }
+
         FiveTupleHash hasher;
         RawPacket raw;
         uint32_t pkt_id = 0;
         
         auto start_time = std::chrono::high_resolution_clock::now();
         
-        while (reader.readNextPacket(raw)) {
+        while (!g_stop_signal.load()) {
+            if (!reader.readNextPacket(raw)) {
+                if (is_live) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    continue;
+                } else {
+                    break;
+                }
+            }
+
             pkt_id++;
             stats_.total_packets++;
             stats_.total_bytes += raw.header.incl_len;
@@ -559,9 +595,18 @@ public:
             while (!lbs_[lb_idx]->queue().push(std::move(pkt))) {
                 std::this_thread::yield();
             }
+
+            if (is_live && packet_limit > 0 && pkt_id >= packet_limit) {
+                std::cout << "\n[Live Capture] Reached packet count limit (" << packet_limit << ").\n";
+                break;
+            }
         }
         
-        std::cout << "[Reader] Completed parsing " << pkt_id << " packets.\n";
+        if (g_stop_signal.load()) {
+            std::cout << "\n[Shutdown] Termination signal received. Flushing pipelines...\n";
+        } else {
+            std::cout << "[Reader] Completed parsing " << pkt_id << " packets.\n";
+        }
         
         for (auto& lb : lbs_) lb->markInputDone();
         for (auto& lb : lbs_) lb->stop();
@@ -700,9 +745,20 @@ AegisFlow v3.0 - High-Speed DPI & Cryptographic Posture Engine
 Author: Shrest Kumar
 ==============================================================
 
-Usage: )" << prog << R"( <input.pcap> <output.pcap> [options]
+Usage: 
+  Offline PCAP Analysis:
+    )" << prog << R"( <input.pcap> <output.pcap> [options]
+
+  Live Interface Sniffing (Daemon Mode):
+    )" << prog << R"( --live <interface> <output.pcap> [options]
+
+  List Available Network Interfaces:
+    )" << prog << R"( --list-interfaces
 
 Core Options:
+  --live <interface>     Live packet sniffing on specified interface
+  --list-interfaces      List discovered capture interfaces and exit
+  --count <n>            Maximum packets to capture (default: 0 = unlimited)
   --block-ip <ip>        Block source IP (e.g., 192.168.1.50)
   --block-app <app>      Block application (YouTube, Facebook, etc.)
   --block-domain <dom>   Block domain substring match
@@ -710,24 +766,72 @@ Core Options:
   --fps <n>              FP worker threads per LB (default: 2)
   --alerts <path>        Path to export JSONL alerts (default: alerts.jsonl)
 
-Example:
+Examples:
   )" << prog << R"( capture.pcap filtered.pcap --block-app YouTube --block-ip 192.168.1.50
+  )" << prog << R"( --live eth0 live_audit.pcap --count 1000
 )";
 }
 
 int main(int argc, char* argv[]) {
+    // Check for --list-interfaces flag
+    for (int i = 1; i < argc; i++) {
+        if (std::string(argv[i]) == "--list-interfaces") {
+            std::cout << "\n[AegisFlow] Discovering local network interfaces for live capture...\n";
+            auto ifaces = PcapReader::listInterfaces();
+            if (ifaces.empty()) {
+                std::cout << "  No interfaces available or missing capture permissions.\n"
+                          << "  (Ensure Npcap is installed on Windows or run as Administrator/root)\n\n";
+            } else {
+                for (size_t idx = 0; idx < ifaces.size(); idx++) {
+                    std::cout << "  [" << idx << "] " << ifaces[idx].name;
+                    if (!ifaces[idx].description.empty()) {
+                        std::cout << " - " << ifaces[idx].description;
+                    }
+                    if (ifaces[idx].is_loopback) {
+                        std::cout << " [Loopback]";
+                    }
+                    std::cout << "\n";
+                }
+                std::cout << "\n";
+            }
+            return 0;
+        }
+    }
+
     if (argc < 3) {
         printUsage(argv[0]);
         return 1;
     }
-    
-    std::string input = argv[1];
-    std::string output = argv[2];
-    
+
+    // Register clean signal handling
+    std::signal(SIGINT, signalHandler);
+    std::signal(SIGTERM, signalHandler);
+
+    std::string input;
+    std::string output;
+    bool is_live = false;
+    uint32_t packet_limit = 0;
+
+    int arg_idx = 1;
+    if (std::string(argv[1]) == "--live") {
+        if (argc < 4) {
+            printUsage(argv[0]);
+            return 1;
+        }
+        is_live = true;
+        input = argv[2];
+        output = argv[3];
+        arg_idx = 4;
+    } else {
+        input = argv[1];
+        output = argv[2];
+        arg_idx = 3;
+    }
+
     DPIEngine::Config cfg;
     std::vector<std::string> block_ips, block_apps, block_domains;
-    
-    for (int i = 3; i < argc; i++) {
+
+    for (int i = arg_idx; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "--block-ip" && i + 1 < argc) block_ips.push_back(argv[++i]);
         else if (arg == "--block-app" && i + 1 < argc) block_apps.push_back(argv[++i]);
@@ -735,17 +839,18 @@ int main(int argc, char* argv[]) {
         else if (arg == "--lbs" && i + 1 < argc) cfg.num_lbs = std::stoi(argv[++i]);
         else if (arg == "--fps" && i + 1 < argc) cfg.fps_per_lb = std::stoi(argv[++i]);
         else if (arg == "--alerts" && i + 1 < argc) cfg.alerts_file = argv[++i];
+        else if (arg == "--count" && i + 1 < argc) packet_limit = static_cast<uint32_t>(std::stoul(argv[++i]));
     }
-    
+
     DPIEngine engine(cfg);
     for (const auto& ip : block_ips) engine.blockIP(ip);
     for (const auto& app : block_apps) engine.blockApp(app);
     for (const auto& dom : block_domains) engine.blockDomain(dom);
-    
-    if (!engine.process(input, output)) {
+
+    if (!engine.process(input, output, is_live, packet_limit)) {
         return 1;
     }
-    
+
     std::cout << "\nProcessing completed successfully.\n";
     return 0;
 }

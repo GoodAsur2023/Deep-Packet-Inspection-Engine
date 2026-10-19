@@ -6,6 +6,14 @@
 #include <vector>
 #include <fstream>
 
+#if defined(__has_include) && __has_include(<pcap.h>)
+#define AEGISFLOW_HAS_LIBPCAP 1
+#include <pcap.h>
+#else
+#define AEGISFLOW_HAS_LIBPCAP 0
+typedef struct pcap pcap_t;
+#endif
+
 namespace PacketAnalyzer {
 
 // PCAP Global Header (24 bytes)
@@ -35,35 +43,55 @@ struct RawPacket {
     std::vector<uint8_t> data;  // The actual packet bytes
 };
 
-// Class to read PCAP files
+// Network interface descriptor for live capture
+struct NetworkInterfaceInfo {
+    std::string name;
+    std::string description;
+    bool is_loopback = false;
+};
+
+// Class to read PCAP files and live network interfaces
 class PcapReader {
 public:
     PcapReader() = default;
     ~PcapReader();
 
-    // Open a pcap file for reading
+    // Open an offline pcap file for reading
     bool open(const std::string& filename);
     
-    // Close the file
+    // Open a live network interface for packet capture
+    bool openLive(const std::string& interface_name, int snaplen = 65535, int promisc = 1, int to_ms = 100);
+
+    // Close the file or live capture session
     void close();
     
-    // Read the next packet, returns false if no more packets
+    // Read the next packet, returns false if no more packets or timeout
     bool readNextPacket(RawPacket& packet);
     
+    // Check if live capture mode is active
+    bool isLive() const { return is_live_; }
+
+    // Enumerate available network interfaces for live capture
+    static std::vector<NetworkInterfaceInfo> listInterfaces();
+
     // Get the global header info
     const PcapGlobalHeader& getGlobalHeader() const { return global_header_; }
     
-    // Check if file is open
-    bool isOpen() const { return file_.is_open(); }
+    // Check if file or live interface is open
+    bool isOpen() const { return file_.is_open() || pcap_handle_ != nullptr; }
     
     // Check if we need to swap byte order
     bool needsByteSwap() const { return needs_byte_swap_; }
 
 private:
     std::ifstream file_;
-    PcapGlobalHeader global_header_;
+    PcapGlobalHeader global_header_{};
     bool needs_byte_swap_ = false;
     
+    // Live capture state
+    pcap_t* pcap_handle_ = nullptr;
+    bool is_live_ = false;
+
     // Helper to swap bytes if needed
     uint16_t maybeSwap16(uint16_t value);
     uint32_t maybeSwap32(uint32_t value);
@@ -72,3 +100,4 @@ private:
 } // namespace PacketAnalyzer
 
 #endif // PCAP_READER_H
+

@@ -15,6 +15,7 @@ CMakeSettings.json
 .idea/
 
 # Output and temp captures
+out*.pcap
 output*.pcap
 result*.pcap
 filtered*.pcap

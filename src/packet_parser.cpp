@@ -69,11 +69,9 @@ bool PacketParser::parseEthernet(const uint8_t* data, size_t len,
         return false;  // Packet too short
     }
     
-    // Parse destination MAC (bytes 0-5)
-    parsed.dest_mac = macToString(data);
-    
-    // Parse source MAC (bytes 6-11)
-    parsed.src_mac = macToString(data + 6);
+    // Store raw MAC bytes directly (zero-copy: no heap allocation)
+    std::memcpy(parsed.dest_mac_raw.data(), data, 6);
+    std::memcpy(parsed.src_mac_raw.data(), data + 6, 6);
     
     // Parse EtherType (bytes 12-13, big-endian)
     parsed.ether_type = ntohs(*reinterpret_cast<const uint16_t*>(data + 12));
@@ -111,17 +109,15 @@ bool PacketParser::parseIPv4(const uint8_t* data, size_t len,
     parsed.ttl = ip_data[8];
     parsed.protocol = ip_data[9];
     
-    // Source IP (bytes 12-15)
+    // Source IP (bytes 12-15) — stored as raw uint32_t, no string conversion
     uint32_t src_ip;
     std::memcpy(&src_ip, ip_data + 12, 4);
     parsed.src_ip_int = src_ip;
-    parsed.src_ip = ipToString(src_ip);
     
     // Destination IP (bytes 16-19)
     uint32_t dest_ip;
     std::memcpy(&dest_ip, ip_data + 16, 4);
     parsed.dest_ip_int = dest_ip;
-    parsed.dest_ip = ipToString(dest_ip);
     
     parsed.has_ip = true;
     offset += ip_header_len;

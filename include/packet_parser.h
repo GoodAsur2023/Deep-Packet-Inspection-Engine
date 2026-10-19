@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <string>
 #include <array>
+#include <sstream>
+#include <iomanip>
 #include "pcap_reader.h"
 
 namespace PacketAnalyzer {
@@ -52,24 +54,24 @@ struct UDPHeader {
     uint16_t checksum;         // Checksum
 };
 
-// Parsed packet information - human-readable format
+// Parsed packet information - zero-copy hot-path representation
+// String formatting is deferred to display-time via accessor methods
+// to eliminate per-packet heap allocations on the inspection pipeline.
 struct ParsedPacket {
     // Timestamps
     uint32_t timestamp_sec;
     uint32_t timestamp_usec;
     
-    // Ethernet layer
-    std::string src_mac;
-    std::string dest_mac;
+    // Ethernet layer (raw binary - no heap allocation)
+    std::array<uint8_t, 6> src_mac_raw{};
+    std::array<uint8_t, 6> dest_mac_raw{};
     uint16_t ether_type;
     
-    // IP layer (if present)
+    // IP layer (binary uint32_t - no string conversion on hot path)
     bool has_ip = false;
     uint8_t ip_version = 0;
     uint32_t src_ip_int = 0;
     uint32_t dest_ip_int = 0;
-    std::string src_ip;
-    std::string dest_ip;
     uint8_t protocol = 0;          // TCP=6, UDP=17, ICMP=1
     uint8_t ttl = 0;
     
@@ -88,6 +90,31 @@ struct ParsedPacket {
     size_t payload_offset = 0;
     size_t payload_length = 0;
     const uint8_t* payload_data = nullptr;  // Points into original packet
+
+    // Lazy string accessors (only called for display/reporting, not on hot path)
+    std::string srcMacString() const { return formatMAC(src_mac_raw.data()); }
+    std::string destMacString() const { return formatMAC(dest_mac_raw.data()); }
+    std::string srcIPString() const { return formatIPv4(src_ip_int); }
+    std::string destIPString() const { return formatIPv4(dest_ip_int); }
+
+private:
+    static std::string formatMAC(const uint8_t* mac) {
+        std::ostringstream ss;
+        ss << std::hex << std::setfill('0');
+        for (int i = 0; i < 6; i++) {
+            if (i > 0) ss << ":";
+            ss << std::setw(2) << static_cast<int>(mac[i]);
+        }
+        return ss.str();
+    }
+    static std::string formatIPv4(uint32_t ip) {
+        std::ostringstream ss;
+        ss << ((ip >> 0) & 0xFF) << "."
+           << ((ip >> 8) & 0xFF) << "."
+           << ((ip >> 16) & 0xFF) << "."
+           << ((ip >> 24) & 0xFF);
+        return ss.str();
+    }
 };
 
 // Class to parse raw packets
