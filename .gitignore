@@ -1,0 +1,40 @@
+# Binaries and build artifacts
+*.exe
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+dpi_engine
+build/
+install/
+cmake-build-*/
+CMakeSettings.json
+.vs/
+.vscode/
+.idea/
+
+# Output and temp captures
+output*.pcap
+result*.pcap
+filtered*.pcap
+my_capture.pcap
+test_out*.pcap
+*.log
+*.tmp
+alerts.jsonl
+remediation_playbook.md
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Local notes and AI chat exports
+*Convo*
+*convo*
+*Gemini*
+*gemini*
+*.chat
