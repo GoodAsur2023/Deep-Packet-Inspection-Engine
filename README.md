@@ -1,9 +1,5 @@
 # AegisFlow: High-Throughput C++ DPI & Cryptographic Posture Engine
 
-[![AegisFlow CI](https://github.com/GoodAsur2023/AegisFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/GoodAsur2023/AegisFlow/actions)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![C++ Standard](https://img.shields.io/badge/Language-C%2B%2B17%20%2F%20C%2B%2B20-00599C?logo=c%2B%2B)](https://en.cppreference.com/)
-[![Python Version](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python)](https://www.python.org/)
 
 **AegisFlow** is a modern, high-performance, multi-threaded Deep Packet Inspection (DPI) and Cryptographic Posture Auditing system engineered in C++17 with a Python automated remediation control plane.
 
